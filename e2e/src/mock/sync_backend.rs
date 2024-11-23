@@ -43,6 +43,7 @@ impl Backend {
     }
 
     /// Binds itself to its address, stores the yielded TCP listener
+    #[cfg(all(not(target_os = "macos"), not(target_os = "freebsd")))]
     pub fn connect(&mut self) {
         let listener = TcpListener::bind(self.address).expect("could not bind");
         let timeout = Duration::from_millis(100);
@@ -65,6 +66,31 @@ impl Backend {
         self.clients = HashMap::new();
     }
 
+    /// Binds itself to its address, stores the yielded TCP listener
+    /// Some BSD systems libc suseconds_t are i32
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    pub fn connect(&mut self) {
+        let listener = TcpListener::bind(self.address).expect("could not bind");
+        let timeout = Duration::from_millis(100);
+        let timeout = libc::timeval {
+            tv_sec: 0,
+            tv_usec: timeout.subsec_micros() as i32,
+        };
+        let listener = unsafe {
+            let fd = listener.into_raw_fd();
+            setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVTIMEO,
+                &timeout as *const libc::timeval as *const _,
+                std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+            );
+            TcpListener::from_raw_fd(fd)
+        };
+        self.listener = Some(listener);
+        self.clients = HashMap::new();
+    }
+    
     pub fn disconnect(&mut self) {
         self.listener = None;
         self.clients = HashMap::new();
